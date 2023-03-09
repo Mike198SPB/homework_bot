@@ -9,16 +9,3 @@ class HTTPStatusNot200(Exception):
 class NotValidStatus(Exception):
     """API возвращает недокументированный статус домашней работы либо
     домашнюю работу без статуса."""
-
-
-
-
-
-class SendMessageError(Exception):
-    """Ошибка при отправке сообщения."""
-    pass
-
-
-class APIAnswerError(Exception):
-    """Ошибка ответ API."""
-    pass

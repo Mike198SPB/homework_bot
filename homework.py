@@ -3,11 +3,15 @@ import os
 import sys
 import time
 from http import HTTPStatus
+from json.decoder import JSONDecodeError
 from logging import StreamHandler
 
 import requests
 import telegram
 from dotenv import load_dotenv
+from requests import (ConnectionError, HTTPError, RequestException, Timeout,
+                      TooManyRedirects)
+from telegram import TelegramError
 
 from exceptions import APIAnswerException, HTTPStatusNot200, NotValidStatus
 
@@ -40,7 +44,7 @@ def send_message(bot, message):
     try:
         bot.send_message(TELEGRAM_CHAT_ID, message)
         logger.debug(f'Сообщение отправлено в чат с id: {TELEGRAM_CHAT_ID}.')
-    except Exception as error:
+    except TelegramError as error:
         logger.error(f'Ошибка при отправке сообщения!: {error}')
 
 
@@ -51,33 +55,48 @@ def get_api_answer(timestamp):
                                 headers=HEADERS,
                                 params={'from_date': timestamp}
                                 )
-    except Exception as error:
+    except HTTPError as error:
+        msg = f'Ошибка HTTP: {error}'
+        raise HTTPError(msg)
+    except ConnectionError as error:
+        msg = f'Ошибка соединения: {error}'
+        raise ConnectionError(msg)
+    except Timeout as error:
+        msg = f'Ошибка тайм-аута: {error}'
+        raise Timeout(msg)
+    except TooManyRedirects as error:
+        msg = f'Ошибка множественных редиректов: {error}'
+        raise TooManyRedirects(msg)
+    except RequestException as error:
         msg = f'Ошибка при запросе к эндпоинту: {error}'
-        logger.error(msg)
         raise APIAnswerException(msg)
-
     if response.status_code != HTTPStatus.OK:
         msg = f'Эндпоинт не доступен, код HTTP: {response.status_code}'
-        logger.error(msg)
         raise HTTPStatusNot200(msg)
-    else:
-        logger.info('Получен ответ от API.')
+    logger.info('Получен ответ от API.')
+    try:
         return response.json()
+    except JSONDecodeError as error:
+        msg = f'Ошибка форматирования в JSON: {error}'
+        raise JSONDecodeError(msg)
 
 
 def check_response(response):
     """Проверка ответа API на соответствие документации."""
     if not isinstance(response, dict):
         msg = f'Тип ответа API - не словарь: {response}'
-        logger.error(msg)
+        raise TypeError(msg)
+    if 'current_date' not in response:
+        msg = f'Отсутствует ключ current_date в ответе API: {response}'
+        raise KeyError(msg)
+    if not isinstance(response['current_date'], int):
+        msg = f'Значение ключа current_date не целое число: {response}'
         raise TypeError(msg)
     if 'homeworks' not in response:
         msg = f'Отсутствует ключ homeworks в ответе API: {response}'
-        logging.error(msg)
         raise KeyError(msg)
     if not isinstance(response['homeworks'], list):
         msg = f'Значение ключа homeworks приходит не в виде списка: {response}'
-        logging.error(msg)
         raise TypeError(msg)
     homeworks = response['homeworks']
     return homeworks
@@ -87,28 +106,35 @@ def parse_status(homework):
     """Извлечение статуса домашней работы."""
     if 'homework_name' not in homework:
         msg = 'В ответе API домашнего задания нет ключа homework_name.'
-        logger.error(msg)
         raise KeyError(msg)
     homework_name = homework['homework_name']
-    status = homework['status']
+    try:
+        status = homework['status']
+    except KeyError as error:
+        msg = f'Отсутствует ключ status: {error}'
+        raise KeyError(msg)
     if status not in HOMEWORK_VERDICTS:
         msg = 'В ответе от API получен неожиданный статус домашней работы.'
-        logger.error(msg)
         raise NotValidStatus(msg)
-    else:
-        logger.info('Получен статус домашней работы.')
-        verdict = HOMEWORK_VERDICTS[status]
-        return f'Изменился статус проверки работы "{homework_name}". {verdict}'
+    logger.info('Получен статус домашней работы.')
+    verdict = HOMEWORK_VERDICTS[status]
+    return f'Изменился статус проверки работы "{homework_name}". {verdict}'
 
 
 def main():
     """Основная логика работы бота."""
+    # У меня бот при первом ревью был задеплоен на сервере, но он не отработал
+    # как предполагается: сообщения о смене статуса не пришли, и в логах только
+    # сообщения INFO - Нет задания на проверке.
+    # Я поменял немного код и надеюсь, что сейчас бот будет корректно работать.
+    # Прошу, на всякий случай, также обратить внимание на потенциальные ошибки
+    # в основной логике работы бота.
     check_tokens()
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
-    timestamp = int(time.time())
     logger.info('Yandex Practicum HW bot запущен в работу.')
     previous_message = None
     while True:
+        timestamp = int(time.time())
         try:
             logger.info('Отправка запроса к API.')
             response = get_api_answer(timestamp)
@@ -120,9 +146,8 @@ def main():
             if current_message != previous_message:
                 send_message(bot, current_message)
                 previous_message = current_message
-                timestamp = response['current_date']
-            else:
-                logger.info('Статус проверки работы не изменился.')
+                continue
+            logger.info('Статус проверки работы не изменился.')
         except Exception as error:
             logger.error(f'Сбой в работе программы: {error}')
         finally:
