@@ -123,31 +123,21 @@ def parse_status(homework):
 
 def main():
     """Основная логика работы бота."""
-    # У меня бот при первом ревью был задеплоен на сервере, но он не отработал
-    # как предполагается: сообщения о смене статуса не пришли, и в логах только
-    # сообщения INFO - Нет задания на проверке.
-    # Я поменял немного код и надеюсь, что сейчас бот будет корректно работать.
-    # Прошу, на всякий случай, также обратить внимание на потенциальные ошибки
-    # в основной логике работы бота.
     check_tokens()
     bot = telegram.Bot(token=TELEGRAM_TOKEN)
+    timestamp = int(time.time())
     logger.info('Yandex Practicum HW bot запущен в работу.')
-    previous_message = None
     while True:
-        timestamp = int(time.time())
         try:
             logger.info('Отправка запроса к API.')
             response = get_api_answer(timestamp)
             homeworks = check_response(response)
-            if not homeworks:
-                logger.info('Нет задания на проверке.')
-                continue
-            current_message = parse_status(homeworks[0])
-            if current_message != previous_message:
-                send_message(bot, current_message)
-                previous_message = current_message
-                continue
-            logger.info('Статус проверки работы не изменился.')
+            if homeworks:
+                message = parse_status(homeworks[0])
+                send_message(bot, message)
+                timestamp = response['current_date']
+            else:
+                logger.info('Нет новых статусов.')
         except Exception as error:
             logger.error(f'Сбой в работе программы: {error}')
         finally:
